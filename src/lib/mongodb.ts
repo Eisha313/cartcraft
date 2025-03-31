@@ -1,102 +1,65 @@
-import { MongoClient, Db, Collection } from 'mongodb';
+import { MongoClient, Db, MongoClientOptions } from 'mongodb';
 
-// Types for our database collections
-export interface CartItem {
-  productId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  image?: string;
+if (!process.env.MONGODB_URI) {
+  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
 }
 
-export interface Cart {
-  _id?: string;
-  sessionId: string;
-  userId?: string;
-  items: CartItem[];
-  discountCode?: string;
-  discountAmount?: number;
-  createdAt: Date;
-  updatedAt: Date;
+const uri: string = process.env.MONGODB_URI;
+const dbName: string = process.env.MONGODB_DB_NAME || 'cartcraft';
+
+const options: MongoClientOptions = {
+  maxPoolSize: 10,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+};
+
+let client: MongoClient;
+let clientPromise: Promise<MongoClient>;
+
+declare global {
+  var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
-export interface Product {
-  _id?: string;
-  name: string;
-  description: string;
-  price: number;
-  inventory: number;
-  image?: string;
-  category?: string;
-  active: boolean;
-  createdAt: Date;
-}
-
-export interface DiscountCode {
-  _id?: string;
-  code: string;
-  type: 'percentage' | 'fixed' | 'free_shipping';
-  value: number;
-  minPurchase?: number;
-  maxUses?: number;
-  usedCount: number;
-  expiresAt?: Date;
-  active: boolean;
-}
-
-export interface Order {
-  _id?: string;
-  stripeSessionId: string;
-  stripePaymentIntentId?: string;
-  userId?: string;
-  sessionId: string;
-  items: CartItem[];
-  subtotal: number;
-  discountAmount: number;
-  total: number;
-  status: 'pending' | 'paid' | 'fulfilled' | 'cancelled';
-  createdAt: Date;
-}
-
-// MongoDB connection singleton
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cartcraft';
-
-let cachedClient: MongoClient | null = null;
-let cachedDb: Db | null = null;
-
-export async function connectToDatabase(): Promise<{ client: MongoClient; db: Db }> {
-  if (cachedClient && cachedDb) {
-    return { client: cachedClient, db: cachedDb };
+if (process.env.NODE_ENV === 'development') {
+  if (!global._mongoClientPromise) {
+    client = new MongoClient(uri, options);
+    global._mongoClientPromise = client.connect();
   }
-
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
-  
-  const db = client.db();
-  
-  cachedClient = client;
-  cachedDb = db;
-  
-  return { client, db };
+  clientPromise = global._mongoClientPromise;
+} else {
+  client = new MongoClient(uri, options);
+  clientPromise = client.connect();
 }
 
-// Collection accessors with proper typing
-export async function getCartsCollection(): Promise<Collection<Cart>> {
-  const { db } = await connectToDatabase();
-  return db.collection<Cart>('carts');
+export async function getDatabase(): Promise<Db> {
+  try {
+    const client = await clientPromise;
+    return client.db(dbName);
+  } catch (error) {
+    console.error('Failed to connect to MongoDB:', error);
+    throw new Error('Database connection failed. Please try again later.');
+  }
 }
 
-export async function getProductsCollection(): Promise<Collection<Product>> {
-  const { db } = await connectToDatabase();
-  return db.collection<Product>('products');
+export async function isConnected(): Promise<boolean> {
+  try {
+    const client = await clientPromise;
+    await client.db(dbName).command({ ping: 1 });
+    return true;
+  } catch (error) {
+    console.error('MongoDB connection check failed:', error);
+    return false;
+  }
 }
 
-export async function getDiscountsCollection(): Promise<Collection<DiscountCode>> {
-  const { db } = await connectToDatabase();
-  return db.collection<DiscountCode>('discounts');
+export async function closeConnection(): Promise<void> {
+  try {
+    const client = await clientPromise;
+    await client.close();
+  } catch (error) {
+    console.error('Failed to close MongoDB connection:', error);
+  }
 }
 
-export async function getOrdersCollection(): Promise<Collection<Order>> {
-  const { db } = await connectToDatabase();
-  return db.collection<Order>('orders');
-}
+export { clientPromise };
+export default clientPromise;
