@@ -1,81 +1,154 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { getMongoClient } from '@/lib/mongodb';
+import { Product } from '@/types/product';
 import {
-  createProduct,
-  listProducts,
-} from '@/lib/products';
-import { ProductCreateInput, ProductFilter } from '@/types/product';
+  parsePaginationParams,
+  parseFilters,
+  parseSortParams,
+  createPaginatedResponse,
+  apiSuccess,
+  apiError,
+} from '@/lib/api-utils';
+import { Filter } from 'mongodb';
+
+function buildProductQuery(filters: Record<string, string | string[]>): Filter<Product> {
+  const query: Filter<Product> = { isActive: true };
+
+  if (filters.category) {
+    query.category = filters.category as string;
+  }
+
+  if (filters.minPrice || filters.maxPrice) {
+    query.price = {};
+    if (filters.minPrice) {
+      const minPrice = parseFloat(filters.minPrice as string);
+      if (!isNaN(minPrice)) {
+        (query.price as Record<string, number>).$gte = minPrice;
+      }
+    }
+    if (filters.maxPrice) {
+      const maxPrice = parseFloat(filters.maxPrice as string);
+      if (!isNaN(maxPrice)) {
+        (query.price as Record<string, number>).$lte = maxPrice;
+      }
+    }
+  }
+
+  if (filters.inStock === 'true') {
+    query.stock = { $gt: 0 };
+  }
+
+  if (filters.search) {
+    const searchRegex = { $regex: filters.search as string, $options: 'i' };
+    query.$or = [
+      { name: searchRegex },
+      { description: searchRegex },
+      { sku: searchRegex },
+    ];
+  }
+
+  if (filters.tags && Array.isArray(filters.tags)) {
+    query.tags = { $in: filters.tags };
+  }
+
+  return query;
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    
-    const filter: ProductFilter = {};
-    
-    const category = searchParams.get('category');
-    if (category) filter.category = category;
-    
-    const tags = searchParams.get('tags');
-    if (tags) filter.tags = tags.split(',');
-    
-    const minPrice = searchParams.get('minPrice');
-    if (minPrice) filter.minPrice = parseFloat(minPrice);
-    
-    const maxPrice = searchParams.get('maxPrice');
-    if (maxPrice) filter.maxPrice = parseFloat(maxPrice);
-    
-    const inStock = searchParams.get('inStock');
-    if (inStock) filter.inStock = inStock === 'true';
-    
-    const isActive = searchParams.get('isActive');
-    if (isActive) filter.isActive = isActive === 'true';
-    
-    const search = searchParams.get('search');
-    if (search) filter.search = search;
-    
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const pageSize = Math.min(
-      parseInt(searchParams.get('pageSize') || '20', 10),
-      100
-    );
+    const { searchParams } = new URL(request.url);
+    const pagination = parsePaginationParams(searchParams);
+    const filters = parseFilters(searchParams);
+    const sort = parseSortParams(searchParams);
 
-    const result = await listProducts(filter, page, pageSize);
-    
-    return NextResponse.json(result);
+    const client = await getMongoClient();
+    const db = client.db();
+    const collection = db.collection<Product>('products');
+
+    const query = buildProductQuery(filters);
+
+    const [products, total] = await Promise.all([
+      collection
+        .find(query)
+        .sort({ [sort.field]: sort.order })
+        .skip(pagination.skip)
+        .limit(pagination.limit)
+        .toArray(),
+      collection.countDocuments(query),
+    ]);
+
+    const response = createPaginatedResponse(products, total, pagination);
+    return apiSuccess(response);
   } catch (error) {
-    console.error('Error listing products:', error);
-    return NextResponse.json(
-      { error: 'Failed to list products' },
-      { status: 500 }
+    console.error('Failed to fetch products:', error);
+    return apiError(
+      'FETCH_ERROR',
+      'Failed to fetch products',
+      500,
+      { error: error instanceof Error ? error.message : 'Unknown error' }
     );
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as ProductCreateInput;
-    
-    if (!body.name || !body.price || !body.sku) {
-      return NextResponse.json(
-        { error: 'Name, price, and SKU are required' },
-        { status: 400 }
-      );
+    const body = await request.json();
+
+    // Basic validation
+    if (!body.name || typeof body.name !== 'string') {
+      return apiError('VALIDATION_ERROR', 'Product name is required', 400);
     }
 
-    if (body.price < 0) {
-      return NextResponse.json(
-        { error: 'Price must be non-negative' },
-        { status: 400 }
-      );
+    if (typeof body.price !== 'number' || body.price < 0) {
+      return apiError('VALIDATION_ERROR', 'Valid price is required', 400);
     }
 
-    const product = await createProduct(body);
-    
-    return NextResponse.json(product, { status: 201 });
+    if (typeof body.stock !== 'number' || body.stock < 0) {
+      return apiError('VALIDATION_ERROR', 'Valid stock quantity is required', 400);
+    }
+
+    const client = await getMongoClient();
+    const db = client.db();
+    const collection = db.collection<Product>('products');
+
+    // Check for duplicate SKU if provided
+    if (body.sku) {
+      const existing = await collection.findOne({ sku: body.sku });
+      if (existing) {
+        return apiError('DUPLICATE_SKU', 'Product with this SKU already exists', 409);
+      }
+    }
+
+    const now = new Date();
+    const product: Omit<Product, 'id'> = {
+      name: body.name.trim(),
+      description: body.description?.trim() || '',
+      price: body.price,
+      currency: body.currency || 'USD',
+      images: body.images || [],
+      category: body.category || 'uncategorized',
+      tags: body.tags || [],
+      stock: body.stock,
+      sku: body.sku || `SKU-${Date.now()}`,
+      isActive: body.isActive !== false,
+      metadata: body.metadata || {},
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const result = await collection.insertOne(product as Product);
+
+    return apiSuccess(
+      { ...product, id: result.insertedId.toString() },
+      201
+    );
   } catch (error) {
-    console.error('Error creating product:', error);
-    return NextResponse.json(
-      { error: 'Failed to create product' },
-      { status: 500 }
+    console.error('Failed to create product:', error);
+    return apiError(
+      'CREATE_ERROR',
+      'Failed to create product',
+      500,
+      { error: error instanceof Error ? error.message : 'Unknown error' }
     );
   }
 }
