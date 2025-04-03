@@ -1,104 +1,167 @@
 import { NextResponse } from 'next/server';
+import { ZodError } from 'zod';
+import { formatValidationErrors } from './validation';
 
-export interface ApiError {
-  code: string;
-  message: string;
-  details?: Record<string, unknown>;
-}
-
-export interface PaginationParams {
-  page: number;
-  limit: number;
-  skip: number;
-}
-
-export interface PaginatedResponse<T> {
-  data: T[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
+export type ApiResponse<T = unknown> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+  errors?: Record<string, string[]>;
+  meta?: {
+    page?: number;
+    limit?: number;
+    total?: number;
+    totalPages?: number;
   };
-}
+};
 
-export function parsePaginationParams(searchParams: URLSearchParams): PaginationParams {
-  const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)));
-  const skip = (page - 1) * limit;
-
-  return { page, limit, skip };
-}
-
-export function createPaginatedResponse<T>(
-  data: T[],
-  total: number,
-  params: PaginationParams
-): PaginatedResponse<T> {
-  const totalPages = Math.ceil(total / params.limit);
-
-  return {
-    data,
-    pagination: {
-      page: params.page,
-      limit: params.limit,
-      total,
-      totalPages,
-      hasNext: params.page < totalPages,
-      hasPrev: params.page > 1,
-    },
-  };
-}
-
-export function apiSuccess<T>(data: T, status = 200): NextResponse {
-  return NextResponse.json(data, { status });
-}
-
-export function apiError(
-  code: string,
-  message: string,
-  status = 400,
-  details?: Record<string, unknown>
-): NextResponse {
-  const error: ApiError = { code, message };
-  if (details) {
-    error.details = details;
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    public code?: string,
+    public details?: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'ApiError';
   }
-  return NextResponse.json({ error }, { status });
+
+  static badRequest(message: string, details?: Record<string, unknown>) {
+    return new ApiError(message, 400, 'BAD_REQUEST', details);
+  }
+
+  static unauthorized(message: string = 'Unauthorized') {
+    return new ApiError(message, 401, 'UNAUTHORIZED');
+  }
+
+  static forbidden(message: string = 'Forbidden') {
+    return new ApiError(message, 403, 'FORBIDDEN');
+  }
+
+  static notFound(resource: string = 'Resource') {
+    return new ApiError(`${resource} not found`, 404, 'NOT_FOUND');
+  }
+
+  static conflict(message: string) {
+    return new ApiError(message, 409, 'CONFLICT');
+  }
+
+  static unprocessable(message: string, details?: Record<string, unknown>) {
+    return new ApiError(message, 422, 'UNPROCESSABLE_ENTITY', details);
+  }
+
+  static internal(message: string = 'Internal server error') {
+    return new ApiError(message, 500, 'INTERNAL_ERROR');
+  }
+
+  static serviceUnavailable(message: string = 'Service temporarily unavailable') {
+    return new ApiError(message, 503, 'SERVICE_UNAVAILABLE');
+  }
 }
 
-export function parseFilters(searchParams: URLSearchParams): Record<string, string | string[]> {
-  const filters: Record<string, string | string[]> = {};
-
-  const category = searchParams.get('category');
-  if (category) filters.category = category;
-
-  const minPrice = searchParams.get('minPrice');
-  if (minPrice) filters.minPrice = minPrice;
-
-  const maxPrice = searchParams.get('maxPrice');
-  if (maxPrice) filters.maxPrice = maxPrice;
-
-  const inStock = searchParams.get('inStock');
-  if (inStock) filters.inStock = inStock;
-
-  const search = searchParams.get('search');
-  if (search) filters.search = search;
-
-  const tags = searchParams.getAll('tags');
-  if (tags.length > 0) filters.tags = tags;
-
-  return filters;
+export function successResponse<T>(
+  data: T,
+  meta?: ApiResponse['meta'],
+  status: number = 200
+): NextResponse<ApiResponse<T>> {
+  return NextResponse.json(
+    {
+      success: true,
+      data,
+      ...(meta && { meta }),
+    },
+    { status }
+  );
 }
 
-export function parseSortParams(searchParams: URLSearchParams): { field: string; order: 1 | -1 } {
-  const sortBy = searchParams.get('sortBy') || 'createdAt';
-  const sortOrder = searchParams.get('sortOrder') === 'asc' ? 1 : -1;
+export function createdResponse<T>(data: T): NextResponse<ApiResponse<T>> {
+  return successResponse(data, undefined, 201);
+}
 
-  const allowedSortFields = ['name', 'price', 'createdAt', 'stock'];
-  const field = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
+export function noContentResponse(): NextResponse {
+  return new NextResponse(null, { status: 204 });
+}
 
-  return { field, order: sortOrder };
+export function errorResponse(
+  error: unknown,
+  defaultMessage: string = 'An unexpected error occurred'
+): NextResponse<ApiResponse> {
+  console.error('API Error:', error);
+
+  if (error instanceof ZodError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Validation failed',
+        errors: formatValidationErrors(error),
+      },
+      { status: 400 }
+    );
+  }
+
+  if (error instanceof ApiError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message,
+        ...(error.details && { errors: error.details }),
+      },
+      { status: error.statusCode }
+    );
+  }
+
+  if (error instanceof Error) {
+    // Don't expose internal error messages in production
+    const message = process.env.NODE_ENV === 'development' 
+      ? error.message 
+      : defaultMessage;
+    
+    return NextResponse.json(
+      {
+        success: false,
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: defaultMessage,
+    },
+    { status: 500 }
+  );
+}
+
+export function paginationMeta(
+  page: number,
+  limit: number,
+  total: number
+): NonNullable<ApiResponse['meta']> {
+  return {
+    page,
+    limit,
+    total,
+    totalPages: Math.ceil(total / limit),
+  };
+}
+
+export async function withErrorHandling<T>(
+  handler: () => Promise<T>
+): Promise<T | NextResponse<ApiResponse>> {
+  try {
+    return await handler();
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+// Request body parsing helper
+export async function parseRequestBody<T>(
+  request: Request,
+  schema: { parse: (data: unknown) => T }
+): Promise<T> {
+  const body = await request.json();
+  return schema.parse(body);
 }
