@@ -1,166 +1,100 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCartSession } from '@/lib/cart-session';
 import {
-  getOrCreateCartSession,
-  addToCart,
-  updateCartItem,
-  removeFromCart,
+  getOrCreateCart,
+  addItemToCart,
+  updateCartItemQuantity,
+  removeItemFromCart,
   clearCart,
-  generateGuestId,
-} from '@/lib/cart-session';
-import { CartSessionIdentifier, AddToCartInput, UpdateCartItemInput } from '@/types/cart';
-import { createApiResponse, createErrorResponse, ApiStatusCode } from '@/lib/api-utils';
-import { cookies } from 'next/headers';
-
-const GUEST_ID_COOKIE = 'cartcraft_guest_id';
-const USER_ID_HEADER = 'x-user-id';
-
-async function getSessionIdentifier(request: NextRequest): Promise<CartSessionIdentifier> {
-  const userId = request.headers.get(USER_ID_HEADER);
-  
-  if (userId) {
-    return { type: 'authenticated', id: userId };
-  }
-
-  const cookieStore = await cookies();
-  let guestId = cookieStore.get(GUEST_ID_COOKIE)?.value;
-
-  if (!guestId) {
-    guestId = generateGuestId();
-  }
-
-  return { type: 'guest', id: guestId };
-}
-
-function setGuestCookie(response: NextResponse, guestId: string): void {
-  response.cookies.set(GUEST_ID_COOKIE, guestId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60 * 24 * 30, // 30 days
-    path: '/',
-  });
-}
+  applyDiscountToCart,
+  removeDiscountFromCart,
+} from '@/lib/cart-operations';
+import { createApiResponse, createErrorResponse } from '@/lib/api-utils';
 
 export async function GET(request: NextRequest) {
   try {
-    const identifier = await getSessionIdentifier(request);
-    const cart = await getOrCreateCartSession(identifier);
-
-    const response = NextResponse.json(
-      createApiResponse(cart, 'Cart retrieved successfully')
-    );
-
-    if (identifier.type === 'guest') {
-      setGuestCookie(response, identifier.id);
-    }
-
-    return response;
+    const { sessionId, userId } = await getCartSession(request);
+    const cart = await getOrCreateCart(sessionId, userId);
+    
+    return createApiResponse(cart);
   } catch (error) {
-    console.error('Error getting cart:', error);
-    return NextResponse.json(
-      createErrorResponse('Failed to retrieve cart', ApiStatusCode.INTERNAL_ERROR),
-      { status: 500 }
-    );
+    console.error('Error fetching cart:', error);
+    return createErrorResponse('Failed to fetch cart', 500);
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const identifier = await getSessionIdentifier(request);
+    const { sessionId, userId } = await getCartSession(request);
     const body = await request.json();
-
-    const { action, ...data } = body;
-
+    const { action, productId, quantity, discountCode } = body;
+    
     let result;
-
+    
     switch (action) {
       case 'add':
-        const addInput: AddToCartInput = {
-          productId: data.productId,
-          variantId: data.variantId,
-          quantity: data.quantity || 1,
-        };
-        result = await addToCart(identifier, addInput);
+        if (!productId || typeof quantity !== 'number' || quantity <= 0) {
+          return createErrorResponse('Invalid product ID or quantity', 400);
+        }
+        result = await addItemToCart(sessionId, productId, quantity, userId);
         break;
-
+        
       case 'update':
-        const updateInput: UpdateCartItemInput = {
-          productId: data.productId,
-          variantId: data.variantId,
-          quantity: data.quantity,
-        };
-        result = await updateCartItem(identifier, updateInput);
+        if (!productId || typeof quantity !== 'number') {
+          return createErrorResponse('Invalid product ID or quantity', 400);
+        }
+        result = await updateCartItemQuantity(sessionId, productId, quantity, userId);
         break;
-
+        
       case 'remove':
-        result = await removeFromCart(identifier, {
-          productId: data.productId,
-          variantId: data.variantId,
-        });
+        if (!productId) {
+          return createErrorResponse('Product ID is required', 400);
+        }
+        result = await removeItemFromCart(sessionId, productId, userId);
         break;
-
+        
       case 'clear':
-        result = await clearCart(identifier);
+        result = await clearCart(sessionId, userId);
         break;
-
+        
+      case 'apply_discount':
+        if (!discountCode) {
+          return createErrorResponse('Discount code is required', 400);
+        }
+        result = await applyDiscountToCart(sessionId, discountCode, userId);
+        break;
+        
+      case 'remove_discount':
+        result = await removeDiscountFromCart(sessionId, userId);
+        break;
+        
       default:
-        return NextResponse.json(
-          createErrorResponse('Invalid action', ApiStatusCode.BAD_REQUEST),
-          { status: 400 }
-        );
+        return createErrorResponse('Invalid action', 400);
     }
-
+    
     if (!result.success) {
-      return NextResponse.json(
-        createErrorResponse(result.error || 'Operation failed', ApiStatusCode.BAD_REQUEST),
-        { status: 400 }
-      );
+      return createErrorResponse(result.error || 'Operation failed', 400);
     }
-
-    const response = NextResponse.json(
-      createApiResponse(result.cart, `Cart ${action} successful`)
-    );
-
-    if (identifier.type === 'guest') {
-      setGuestCookie(response, identifier.id);
-    }
-
-    return response;
+    
+    return createApiResponse(result.cart);
   } catch (error) {
     console.error('Error processing cart action:', error);
-    return NextResponse.json(
-      createErrorResponse('Failed to process cart action', ApiStatusCode.INTERNAL_ERROR),
-      { status: 500 }
-    );
+    return createErrorResponse('Failed to process cart action', 500);
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const identifier = await getSessionIdentifier(request);
-    const result = await clearCart(identifier);
-
+    const { sessionId, userId } = await getCartSession(request);
+    const result = await clearCart(sessionId, userId);
+    
     if (!result.success) {
-      return NextResponse.json(
-        createErrorResponse(result.error || 'Failed to clear cart', ApiStatusCode.BAD_REQUEST),
-        { status: 400 }
-      );
+      return createErrorResponse(result.error || 'Failed to clear cart', 400);
     }
-
-    const response = NextResponse.json(
-      createApiResponse(result.cart, 'Cart cleared successfully')
-    );
-
-    if (identifier.type === 'guest') {
-      setGuestCookie(response, identifier.id);
-    }
-
-    return response;
+    
+    return createApiResponse({ message: 'Cart cleared successfully' });
   } catch (error) {
     console.error('Error clearing cart:', error);
-    return NextResponse.json(
-      createErrorResponse('Failed to clear cart', ApiStatusCode.INTERNAL_ERROR),
-      { status: 500 }
-    );
+    return createErrorResponse('Failed to clear cart', 500);
   }
 }
