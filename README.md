@@ -4,4 +4,4 @@ A lightweight shopping cart widget library for embedding customizable e-commerce
 
 ## Updates
 
-Commit 14
+Commit 15
