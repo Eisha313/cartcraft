@@ -1,73 +1,83 @@
 import { NextRequest } from 'next/server';
-import { 
-  successResponse, 
-  createdResponse, 
-  errorResponse, 
-  paginationMeta,
+import {
+  successResponse,
+  createdResponse,
+  withErrorHandler,
   parseRequestBody,
-  ApiError 
+  parseQueryParams,
+  getPaginationParams,
+  createPaginatedResponse,
+  ApiError,
 } from '@/lib/api-utils';
-import { 
-  productCreateSchema, 
-  paginationSchema,
-  parseQueryParams 
-} from '@/lib/validation';
-import { ProductService } from '@/lib/products';
+import {
+  getProducts,
+  createProduct,
+  countProducts,
+  searchProducts,
+} from '@/lib/products';
+import { CreateProductSchema } from '@/lib/validation';
 
 export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
+  return withErrorHandler(async () => {
+    const searchParams = parseQueryParams(request);
+    const { page, limit, skip } = getPaginationParams(searchParams);
     
-    // Parse pagination
-    const pagination = parseQueryParams(searchParams, paginationSchema) ?? { page: 1, limit: 20 };
+    const search = searchParams.get('search');
+    const category = searchParams.get('category');
+    const inStock = searchParams.get('inStock');
+    const sortBy = searchParams.get('sortBy') || 'createdAt';
+    const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
+
+    const filters: Record<string, unknown> = {};
     
-    // Parse filters
-    const category = searchParams.get('category') || undefined;
-    const search = searchParams.get('search') || undefined;
-    const isActive = searchParams.get('isActive');
-    const minPrice = searchParams.get('minPrice');
-    const maxPrice = searchParams.get('maxPrice');
-    const sortBy = searchParams.get('sortBy') as 'name' | 'price' | 'createdAt' | undefined;
-    const sortOrder = searchParams.get('sortOrder') as 'asc' | 'desc' | undefined;
+    if (category) {
+      filters.category = category;
+    }
+    
+    if (inStock === 'true') {
+      filters.inStock = true;
+    }
 
-    const filters = {
-      category,
-      search,
-      isActive: isActive ? isActive === 'true' : undefined,
-      minPrice: minPrice ? parseFloat(minPrice) : undefined,
-      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-    };
+    let products;
+    let total;
 
-    const { products, total } = await ProductService.list({
-      ...pagination,
-      ...filters,
-      sortBy,
-      sortOrder,
-    });
+    if (search) {
+      const results = await searchProducts(search, {
+        ...filters,
+        skip,
+        limit,
+        sortBy,
+        sortOrder,
+      });
+      products = results.products;
+      total = results.total;
+    } else {
+      [products, total] = await Promise.all([
+        getProducts({
+          ...filters,
+          skip,
+          limit,
+          sortBy,
+          sortOrder,
+        }),
+        countProducts(filters),
+      ]);
+    }
 
-    return successResponse(
-      products,
-      paginationMeta(pagination.page, pagination.limit, total)
-    );
-  } catch (error) {
-    return errorResponse(error, 'Failed to fetch products');
-  }
+    return createPaginatedResponse(products, total, page, limit);
+  });
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await parseRequestBody(request, productCreateSchema);
+  return withErrorHandler(async () => {
+    const body = await parseRequestBody(request, CreateProductSchema);
     
-    // Check for duplicate SKU
-    const existingProduct = await ProductService.findBySku(body.sku);
-    if (existingProduct) {
-      throw ApiError.conflict(`Product with SKU '${body.sku}' already exists`);
+    const product = await createProduct(body);
+
+    if (!product) {
+      throw ApiError.internal('Failed to create product');
     }
 
-    const product = await ProductService.create(body);
-    
     return createdResponse(product);
-  } catch (error) {
-    return errorResponse(error, 'Failed to create product');
-  }
+  });
 }

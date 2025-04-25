@@ -1,61 +1,55 @@
 import { NextResponse } from 'next/server';
-import { ZodError } from 'zod';
-import { formatValidationErrors } from './validation';
+import { ZodError, ZodSchema } from 'zod';
 
-export type ApiResponse<T = unknown> = {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
-  errors?: Record<string, string[]>;
+  details?: unknown;
   meta?: {
     page?: number;
     limit?: number;
     total?: number;
-    totalPages?: number;
+    hasMore?: boolean;
   };
-};
+}
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number = 500,
-    public code?: string,
-    public details?: Record<string, unknown>
+    public details?: unknown
   ) {
     super(message);
     this.name = 'ApiError';
   }
 
-  static badRequest(message: string, details?: Record<string, unknown>) {
-    return new ApiError(message, 400, 'BAD_REQUEST', details);
+  static badRequest(message: string, details?: unknown): ApiError {
+    return new ApiError(message, 400, details);
   }
 
-  static unauthorized(message: string = 'Unauthorized') {
-    return new ApiError(message, 401, 'UNAUTHORIZED');
+  static unauthorized(message: string = 'Unauthorized'): ApiError {
+    return new ApiError(message, 401);
   }
 
-  static forbidden(message: string = 'Forbidden') {
-    return new ApiError(message, 403, 'FORBIDDEN');
+  static forbidden(message: string = 'Forbidden'): ApiError {
+    return new ApiError(message, 403);
   }
 
-  static notFound(resource: string = 'Resource') {
-    return new ApiError(`${resource} not found`, 404, 'NOT_FOUND');
+  static notFound(resource: string = 'Resource'): ApiError {
+    return new ApiError(`${resource} not found`, 404);
   }
 
-  static conflict(message: string) {
-    return new ApiError(message, 409, 'CONFLICT');
+  static conflict(message: string): ApiError {
+    return new ApiError(message, 409);
   }
 
-  static unprocessable(message: string, details?: Record<string, unknown>) {
-    return new ApiError(message, 422, 'UNPROCESSABLE_ENTITY', details);
+  static unprocessable(message: string, details?: unknown): ApiError {
+    return new ApiError(message, 422, details);
   }
 
-  static internal(message: string = 'Internal server error') {
-    return new ApiError(message, 500, 'INTERNAL_ERROR');
-  }
-
-  static serviceUnavailable(message: string = 'Service temporarily unavailable') {
-    return new ApiError(message, 503, 'SERVICE_UNAVAILABLE');
+  static internal(message: string = 'Internal server error'): ApiError {
+    return new ApiError(message, 500);
   }
 }
 
@@ -64,14 +58,16 @@ export function successResponse<T>(
   meta?: ApiResponse['meta'],
   status: number = 200
 ): NextResponse<ApiResponse<T>> {
-  return NextResponse.json(
-    {
-      success: true,
-      data,
-      ...(meta && { meta }),
-    },
-    { status }
-  );
+  const response: ApiResponse<T> = {
+    success: true,
+    data,
+  };
+
+  if (meta) {
+    response.meta = meta;
+  }
+
+  return NextResponse.json(response, { status });
 }
 
 export function createdResponse<T>(data: T): NextResponse<ApiResponse<T>> {
@@ -83,85 +79,129 @@ export function noContentResponse(): NextResponse {
 }
 
 export function errorResponse(
-  error: unknown,
-  defaultMessage: string = 'An unexpected error occurred'
-): NextResponse<ApiResponse> {
-  console.error('API Error:', error);
-
-  if (error instanceof ZodError) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Validation failed',
-        errors: formatValidationErrors(error),
-      },
-      { status: 400 }
-    );
-  }
+  error: string | Error | ApiError,
+  statusCode: number = 500,
+  details?: unknown
+): NextResponse<ApiResponse<never>> {
+  let message: string;
+  let status: number = statusCode;
+  let errorDetails: unknown = details;
 
   if (error instanceof ApiError) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message,
-        ...(error.details && { errors: error.details }),
-      },
-      { status: error.statusCode }
-    );
+    message = error.message;
+    status = error.statusCode;
+    errorDetails = error.details ?? details;
+  } else if (error instanceof ZodError) {
+    message = 'Validation failed';
+    status = 400;
+    errorDetails = error.errors.map((e) => ({
+      path: e.path.join('.'),
+      message: e.message,
+    }));
+  } else if (error instanceof Error) {
+    message = error.message;
+  } else {
+    message = error;
   }
 
-  if (error instanceof Error) {
-    // Don't expose internal error messages in production
-    const message = process.env.NODE_ENV === 'development' 
-      ? error.message 
-      : defaultMessage;
-    
-    return NextResponse.json(
-      {
-        success: false,
-        error: message,
-      },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json(
-    {
-      success: false,
-      error: defaultMessage,
-    },
-    { status: 500 }
-  );
-}
-
-export function paginationMeta(
-  page: number,
-  limit: number,
-  total: number
-): NonNullable<ApiResponse['meta']> {
-  return {
-    page,
-    limit,
-    total,
-    totalPages: Math.ceil(total / limit),
+  const response: ApiResponse<never> = {
+    success: false,
+    error: message,
   };
+
+  if (errorDetails) {
+    response.details = errorDetails;
+  }
+
+  return NextResponse.json(response, { status });
 }
 
-export async function withErrorHandling<T>(
-  handler: () => Promise<T>
-): Promise<T | NextResponse<ApiResponse>> {
+export async function parseRequestBody<T>(
+  request: Request,
+  schema: ZodSchema<T>
+): Promise<T> {
+  let body: unknown;
+  
+  try {
+    body = await request.json();
+  } catch {
+    throw ApiError.badRequest('Invalid JSON body');
+  }
+
+  const result = schema.safeParse(body);
+  
+  if (!result.success) {
+    throw ApiError.badRequest(
+      'Validation failed',
+      result.error.errors.map((e) => ({
+        path: e.path.join('.'),
+        message: e.message,
+      }))
+    );
+  }
+
+  return result.data;
+}
+
+export function parseQueryParams(request: Request): URLSearchParams {
+  const url = new URL(request.url);
+  return url.searchParams;
+}
+
+export function getPaginationParams(
+  searchParams: URLSearchParams,
+  defaults: { page?: number; limit?: number } = {}
+): { page: number; limit: number; skip: number } {
+  const page = Math.max(1, parseInt(searchParams.get('page') || String(defaults.page || 1), 10));
+  const limit = Math.min(
+    100,
+    Math.max(1, parseInt(searchParams.get('limit') || String(defaults.limit || 20), 10))
+  );
+  const skip = (page - 1) * limit;
+
+  return { page, limit, skip };
+}
+
+export type RouteHandler<T = unknown> = () => Promise<NextResponse<ApiResponse<T>>>;
+
+export async function withErrorHandler<T>(
+  handler: RouteHandler<T>
+): Promise<NextResponse<ApiResponse<T | never>>> {
   try {
     return await handler();
   } catch (error) {
-    return errorResponse(error);
+    console.error('API Error:', error);
+
+    if (error instanceof ApiError) {
+      return errorResponse(error);
+    }
+
+    if (error instanceof ZodError) {
+      return errorResponse(error);
+    }
+
+    if (error instanceof Error) {
+      // Don't expose internal error messages in production
+      const message = process.env.NODE_ENV === 'development'
+        ? error.message
+        : 'Internal server error';
+      return errorResponse(message, 500);
+    }
+
+    return errorResponse('An unexpected error occurred', 500);
   }
 }
 
-// Request body parsing helper
-export async function parseRequestBody<T>(
-  request: Request,
-  schema: { parse: (data: unknown) => T }
-): Promise<T> {
-  const body = await request.json();
-  return schema.parse(body);
+export function createPaginatedResponse<T>(
+  data: T[],
+  total: number,
+  page: number,
+  limit: number
+): NextResponse<ApiResponse<T[]>> {
+  return successResponse(data, {
+    page,
+    limit,
+    total,
+    hasMore: page * limit < total,
+  });
 }

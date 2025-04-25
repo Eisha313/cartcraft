@@ -1,100 +1,102 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCartSession } from '@/lib/cart-session';
+import { NextRequest } from 'next/server';
 import {
-  getOrCreateCart,
-  addItemToCart,
-  updateCartItemQuantity,
-  removeItemFromCart,
-  clearCart,
-  applyDiscountToCart,
-  removeDiscountFromCart,
-} from '@/lib/cart-operations';
-import { createApiResponse, createErrorResponse } from '@/lib/api-utils';
+  successResponse,
+  errorResponse,
+  withErrorHandler,
+  parseRequestBody,
+  ApiError,
+} from '@/lib/api-utils';
+import { getCartSession, createCartSession } from '@/lib/cart-session';
+import { getCart, addToCart, updateCartItem, removeFromCart, clearCart } from '@/lib/cart-operations';
+import { z } from 'zod';
+
+const AddToCartSchema = z.object({
+  productId: z.string().min(1, 'Product ID is required'),
+  quantity: z.number().int().positive('Quantity must be a positive integer'),
+  variantId: z.string().optional(),
+});
+
+const UpdateCartSchema = z.object({
+  itemId: z.string().min(1, 'Item ID is required'),
+  quantity: z.number().int().min(0, 'Quantity must be non-negative'),
+});
+
+const RemoveFromCartSchema = z.object({
+  itemId: z.string().min(1, 'Item ID is required'),
+});
+
+async function getOrCreateSession(request: NextRequest): Promise<string> {
+  let session = await getCartSession(request);
+  if (!session) {
+    session = await createCartSession();
+  }
+  return session.id;
+}
 
 export async function GET(request: NextRequest) {
-  try {
-    const { sessionId, userId } = await getCartSession(request);
-    const cart = await getOrCreateCart(sessionId, userId);
-    
-    return createApiResponse(cart);
-  } catch (error) {
-    console.error('Error fetching cart:', error);
-    return createErrorResponse('Failed to fetch cart', 500);
-  }
+  return withErrorHandler(async () => {
+    const sessionId = await getOrCreateSession(request);
+    const cart = await getCart(sessionId);
+    return successResponse(cart);
+  });
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const { sessionId, userId } = await getCartSession(request);
-    const body = await request.json();
-    const { action, productId, quantity, discountCode } = body;
+  return withErrorHandler(async () => {
+    const sessionId = await getOrCreateSession(request);
+    const body = await parseRequestBody(request, AddToCartSchema);
     
-    let result;
-    
-    switch (action) {
-      case 'add':
-        if (!productId || typeof quantity !== 'number' || quantity <= 0) {
-          return createErrorResponse('Invalid product ID or quantity', 400);
-        }
-        result = await addItemToCart(sessionId, productId, quantity, userId);
-        break;
-        
-      case 'update':
-        if (!productId || typeof quantity !== 'number') {
-          return createErrorResponse('Invalid product ID or quantity', 400);
-        }
-        result = await updateCartItemQuantity(sessionId, productId, quantity, userId);
-        break;
-        
-      case 'remove':
-        if (!productId) {
-          return createErrorResponse('Product ID is required', 400);
-        }
-        result = await removeItemFromCart(sessionId, productId, userId);
-        break;
-        
-      case 'clear':
-        result = await clearCart(sessionId, userId);
-        break;
-        
-      case 'apply_discount':
-        if (!discountCode) {
-          return createErrorResponse('Discount code is required', 400);
-        }
-        result = await applyDiscountToCart(sessionId, discountCode, userId);
-        break;
-        
-      case 'remove_discount':
-        result = await removeDiscountFromCart(sessionId, userId);
-        break;
-        
-      default:
-        return createErrorResponse('Invalid action', 400);
+    const cart = await addToCart(sessionId, {
+      productId: body.productId,
+      quantity: body.quantity,
+      variantId: body.variantId,
+    });
+
+    if (!cart) {
+      throw ApiError.unprocessable('Failed to add item to cart');
     }
+
+    return successResponse(cart);
+  });
+}
+
+export async function PUT(request: NextRequest) {
+  return withErrorHandler(async () => {
+    const sessionId = await getOrCreateSession(request);
+    const body = await parseRequestBody(request, UpdateCartSchema);
     
-    if (!result.success) {
-      return createErrorResponse(result.error || 'Operation failed', 400);
+    const cart = await updateCartItem(sessionId, body.itemId, body.quantity);
+
+    if (!cart) {
+      throw ApiError.notFound('Cart item');
     }
-    
-    return createApiResponse(result.cart);
-  } catch (error) {
-    console.error('Error processing cart action:', error);
-    return createErrorResponse('Failed to process cart action', 500);
-  }
+
+    return successResponse(cart);
+  });
 }
 
 export async function DELETE(request: NextRequest) {
-  try {
-    const { sessionId, userId } = await getCartSession(request);
-    const result = await clearCart(sessionId, userId);
-    
-    if (!result.success) {
-      return createErrorResponse(result.error || 'Failed to clear cart', 400);
+  return withErrorHandler(async () => {
+    const sessionId = await getOrCreateSession(request);
+    const url = new URL(request.url);
+    const itemId = url.searchParams.get('itemId');
+    const clearAll = url.searchParams.get('clear') === 'true';
+
+    if (clearAll) {
+      const cart = await clearCart(sessionId);
+      return successResponse(cart);
     }
-    
-    return createApiResponse({ message: 'Cart cleared successfully' });
-  } catch (error) {
-    console.error('Error clearing cart:', error);
-    return createErrorResponse('Failed to clear cart', 500);
-  }
+
+    if (!itemId) {
+      throw ApiError.badRequest('Item ID is required');
+    }
+
+    const cart = await removeFromCart(sessionId, itemId);
+
+    if (!cart) {
+      throw ApiError.notFound('Cart item');
+    }
+
+    return successResponse(cart);
+  });
 }
