@@ -1,85 +1,51 @@
 /**
- * CartCraft Library Exports
+ * CartCraft Library
  * 
- * This module provides the main entry points for CartCraft functionality.
- * Use these utilities to interact with the cart system programmatically.
+ * A lightweight shopping cart widget library for embedding customizable
+ * e-commerce functionality into any Next.js application.
  * 
  * @packageDocumentation
  */
 
-// Database connection
+// Database
 export { clientPromise, getDatabase, getCollection } from './mongodb';
 
-// Stripe integration
-export {
-  stripe,
-  createCheckoutSession,
-  createPaymentIntent,
-  constructWebhookEvent,
-} from './stripe';
-
-// Product management
-export {
-  getProducts,
-  getProductById,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-  searchProducts,
-} from './products';
-
-// Inventory management
-export {
-  getInventory,
-  updateInventory,
-  reserveInventory,
-  releaseInventory,
-  checkAvailability,
-} from './inventory';
-
-// Discount system
-export {
-  validateDiscountCode,
-  applyDiscount,
-  createDiscountCode,
-  deactivateDiscountCode,
-  getActiveDiscounts,
-} from './discounts';
-
-// Cart operations
-export {
-  addToCart,
-  removeFromCart,
-  updateCartItem,
-  clearCart,
-  calculateCartTotals,
-  applyDiscountToCart,
-} from './cart-operations';
-
-// Cart session management
-export {
-  getOrCreateCartSession,
-  getCartBySessionId,
-  mergeGuestCart,
-  associateCartWithUser,
-} from './cart-session';
+// Stripe Integration
+export { stripe, createCheckoutSession, createPaymentIntent, constructWebhookEvent } from './stripe';
 
 // Configuration
+export { getCartConfig, defaultCartConfig } from './cart-config';
 export { config } from './config';
-export { cartConfig, type CartConfig } from './cart-config';
 export { env } from './env';
 
-// Utilities
-export {
-  apiResponse,
-  apiError,
-  withErrorHandler,
-  parseQueryParams,
-} from './api-utils';
+// Products & Inventory
+export { ProductService } from './products';
+export { InventoryService } from './inventory';
 
+// Cart Operations
+export { CartSessionManager } from './cart-session';
+export { CartOperations } from './cart-operations';
+
+// Discounts
+export { DiscountService } from './discounts';
+
+// Validation
 export {
   validateProduct,
   validateCartItem,
-  validateDiscountCode as validateDiscountInput,
-  ValidationError,
+  validateDiscount,
+  validateEmail,
+  validateObjectId,
+  sanitizeString,
+  type ValidationResult,
 } from './validation';
+
+// API Utilities
+export {
+  successResponse,
+  errorResponse,
+  notFoundResponse,
+  badRequestResponse,
+  unauthorizedResponse,
+  withErrorHandler,
+} from './api-utils';

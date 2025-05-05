@@ -1,46 +1,54 @@
 /**
  * CartCraft Type Definitions
  * 
- * This module exports all public types for the CartCraft library.
- * Import types from this module for type-safe integration.
+ * This module exports all TypeScript types and interfaces used throughout
+ * the CartCraft library. Import types from this module for type-safe
+ * integration with your application.
  * 
  * @example
  * ```typescript
- * import type { Product, Cart, DiscountCode } from 'cartcraft/types';
+ * import type { Product, CartItem, DiscountCode } from 'cartcraft/types';
  * ```
+ * 
+ * @packageDocumentation
  */
 
-// Product types
+// Product Types
 export type {
+  /** Core product definition with pricing and metadata */
   Product,
-  ProductVariant,
-  ProductImage,
-  ProductCategory,
+  /** Input for creating a new product */
   CreateProductInput,
+  /** Input for updating an existing product */
   UpdateProductInput,
-  ProductQuery,
+  /** Stock keeping unit for inventory tracking */
+  ProductVariant,
+  /** Product category for catalog organization */
+  ProductCategory,
 } from './product';
 
-// Cart types
+// Cart Types
 export type {
-  Cart,
+  /** Individual item in a shopping cart */
   CartItem,
+  /** Complete shopping cart with items and metadata */
+  Cart,
+  /** Session data for cart persistence */
   CartSession,
-  CartTotals,
-  AddToCartInput,
-  UpdateCartItemInput,
-  CartWithTotals,
+  /** Options for cart operations */
+  CartOperationOptions,
+  /** Result of a cart operation */
+  CartOperationResult,
 } from './cart';
 
-// Discount types
+// Discount Types
 export type {
+  /** Discount code configuration */
   DiscountCode,
+  /** Types of discount rules available */
   DiscountType,
-  DiscountRule,
-  PercentageDiscount,
-  FixedAmountDiscount,
-  FreeShippingDiscount,
+  /** Result of discount validation */
   DiscountValidationResult,
+  /** Input for creating a discount code */
   CreateDiscountInput,
-  AppliedDiscount,
 } from './discount';
