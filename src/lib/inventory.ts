@@ -263,6 +263,25 @@ export async function confirmSale(
   return true;
 }
 
+export async function checkInventory(
+  productId: string,
+  requestedQuantity: number
+): Promise<{ available: boolean; currentStock: number }> {
+  const item = await getInventoryItem(productId);
+
+  if (!item) {
+    // If no inventory record exists, assume available (product may not track inventory)
+    return { available: true, currentStock: 0 };
+  }
+
+  const availableStock = item.quantity - item.reservedQuantity;
+
+  return {
+    available: availableStock >= requestedQuantity,
+    currentStock: Math.max(0, availableStock),
+  };
+}
+
 export async function getLowStockItems(threshold?: number): Promise<InventoryItem[]> {
   const collection = await getInventoryCollection();
   

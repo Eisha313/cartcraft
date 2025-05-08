@@ -205,3 +205,9 @@ export function createPaginatedResponse<T>(
     hasMore: page * limit < total,
   });
 }
+
+// Aliases used by API routes
+export const createApiResponse = successResponse;
+export const createErrorResponse = errorResponse;
+export const createSuccessResponse = successResponse;
+export const validateRequestBody = parseRequestBody;

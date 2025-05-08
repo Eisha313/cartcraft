@@ -1,10 +1,6 @@
 import { MongoClient, Db, MongoClientOptions } from 'mongodb';
 
-if (!process.env.MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
-}
-
-const uri: string = process.env.MONGODB_URI;
+const uri: string = process.env.MONGODB_URI || '';
 const dbName: string = process.env.MONGODB_DB_NAME || 'cartcraft';
 
 const options: MongoClientOptions = {
@@ -59,6 +55,10 @@ export async function closeConnection(): Promise<void> {
   } catch (error) {
     console.error('Failed to close MongoDB connection:', error);
   }
+}
+
+export async function getMongoClient(): Promise<MongoClient> {
+  return clientPromise;
 }
 
 export { clientPromise };
