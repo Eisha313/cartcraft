@@ -1,8 +1,8 @@
 import { ObjectId, Collection } from 'mongodb';
 import { getMongoClient } from './mongodb';
 import { Cart, CartItem } from '@/types/cart';
-import { getProductById, updateProductStock } from './products';
-import { validateDiscountCode, applyDiscount } from './discounts';
+import { getProductById } from './products';
+import { validateDiscountCode, calculateDiscount } from './discounts';
 
 const CART_COLLECTION = 'carts';
 
@@ -64,7 +64,7 @@ export async function addItemToCart(
       return { success: false, error: 'Product not found' };
     }
     
-    if (product.stock < quantity) {
+    if ((product.inventory.quantity - product.inventory.reservedQuantity) < quantity) {
       return { success: false, error: 'Insufficient stock' };
     }
     
@@ -77,7 +77,7 @@ export async function addItemToCart(
     
     if (existingItemIndex >= 0) {
       const newQuantity = cart.items[existingItemIndex].quantity + quantity;
-      if (product.stock < newQuantity) {
+      if ((product.inventory.quantity - product.inventory.reservedQuantity) < newQuantity) {
         return { success: false, error: 'Insufficient stock for requested quantity' };
       }
       cart.items[existingItemIndex].quantity = newQuantity;
@@ -87,7 +87,8 @@ export async function addItemToCart(
         name: product.name,
         price: product.price,
         quantity,
-        image: product.images?.[0],
+        image: product.images?.[0]?.url,
+        addedAt: new Date(),
       };
       cart.items.push(newItem);
     }
@@ -139,7 +140,7 @@ export async function updateCartItemQuantity(
       return { success: false, error: 'Product no longer available' };
     }
     
-    if (product.stock < quantity) {
+    if ((product.inventory.quantity - product.inventory.reservedQuantity) < quantity) {
       return { success: false, error: 'Insufficient stock' };
     }
     
@@ -252,7 +253,8 @@ export async function applyDiscountToCart(
     }
     
     const discount = discountResult.discount!;
-    const discountAmount = applyDiscount(discount, cart.subtotal);
+    const appliedDiscounts = calculateDiscount(discount.rules, cart.subtotal, 0);
+    const discountAmount = appliedDiscounts.reduce((sum, d) => sum + d.amount, 0);
     
     cart.discountCode = discountCode;
     cart.discount = discountAmount;
@@ -297,7 +299,7 @@ export async function removeDiscountFromCart(
       { _id: cart._id },
       { 
         $set: { 
-          discountCode: null,
+          discountCode: undefined,
           discount: 0,
           total: cart.total,
           updatedAt: new Date()

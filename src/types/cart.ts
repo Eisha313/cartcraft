@@ -8,6 +8,19 @@ export interface CartItem {
   addedAt: Date;
 }
 
+export interface Cart {
+  _id?: any;
+  sessionId: string;
+  userId?: string;
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  discountCode?: string;
+  total: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CartSession {
   _id?: string;
   sessionId: string;

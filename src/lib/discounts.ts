@@ -45,7 +45,7 @@ export async function getDiscountByCode(code: string): Promise<DiscountCode | nu
 
 export async function getDiscountById(id: string): Promise<DiscountCode | null> {
   const collection = await getDiscountCollection();
-  const discount = await collection.findOne({ _id: new ObjectId(id) });
+  const discount = await collection.findOne({ _id: new ObjectId(id) } as any);
   
   if (!discount) return null;
   
@@ -71,7 +71,7 @@ export async function updateDiscountCode(
   }
 
   const result = await collection.findOneAndUpdate(
-    { _id: new ObjectId(id) },
+    { _id: new ObjectId(id) } as any,
     { $set: updateData },
     { returnDocument: 'after' }
   );
@@ -86,7 +86,7 @@ export async function updateDiscountCode(
 
 export async function deleteDiscountCode(id: string): Promise<boolean> {
   const collection = await getDiscountCollection();
-  const result = await collection.deleteOne({ _id: new ObjectId(id) });
+  const result = await collection.deleteOne({ _id: new ObjectId(id) } as any);
   return result.deletedCount === 1;
 }
 

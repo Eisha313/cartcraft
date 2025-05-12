@@ -139,7 +139,7 @@ export async function addToCart(
         quantity: input.quantity,
         price: product.price,
         name: product.name,
-        image: product.images?.[0],
+        image: product.images?.[0]?.url,
         addedAt: new Date(),
       };
       updatedItems = [...session.items, newItem];
