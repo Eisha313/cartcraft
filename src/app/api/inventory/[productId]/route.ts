@@ -7,7 +7,7 @@ import {
   initializeInventory,
   getInventoryItem
 } from '@/lib/inventory';
-import { createApiResponse, createErrorResponse, validateRequestBody } from '@/lib/api-utils';
+import { createApiResponse, createErrorResponse } from '@/lib/api-utils';
 
 interface RouteParams {
   params: { productId: string };
@@ -50,12 +50,15 @@ export async function POST(
     const { productId } = params;
     const body = await request.json();
     
-    const validation = validateRequestBody(body, ['sku', 'quantity']);
-    if (!validation.valid) {
-      return createErrorResponse(validation.error!, 400);
-    }
-    
     const { sku, quantity, lowStockThreshold } = body;
+
+    if (!sku || typeof sku !== 'string') {
+      return createErrorResponse('SKU is required', 400);
+    }
+
+    if (quantity === undefined || quantity === null) {
+      return createErrorResponse('Quantity is required', 400);
+    }
     
     if (typeof quantity !== 'number' || quantity < 0) {
       return createErrorResponse('Quantity must be a non-negative number', 400);
@@ -68,7 +71,7 @@ export async function POST(
       lowStockThreshold
     );
     
-    return createApiResponse(inventory, 201);
+    return createApiResponse(inventory, undefined, 201);
   } catch (error) {
     console.error('Failed to initialize inventory:', error);
     const message = error instanceof Error ? error.message : 'Failed to initialize inventory';

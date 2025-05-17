@@ -6,8 +6,7 @@ import {
   parseRequestBody,
   ApiError,
 } from '@/lib/api-utils';
-import { getCartSession, createCartSession } from '@/lib/cart-session';
-import { getCart, addToCart, updateCartItem, removeFromCart, clearCart } from '@/lib/cart-operations';
+import { getCart, addItemToCart, updateCartItemQuantity, removeItemFromCart, clearCart } from '@/lib/cart-operations';
 import { z } from 'zod';
 
 const AddToCartSchema = z.object({
@@ -25,78 +24,90 @@ const RemoveFromCartSchema = z.object({
   itemId: z.string().min(1, 'Item ID is required'),
 });
 
-async function getOrCreateSession(request: NextRequest): Promise<string> {
-  let session = await getCartSession(request);
-  if (!session) {
-    session = await createCartSession();
-  }
-  return session.id;
+function getSessionId(request: NextRequest): string | null {
+  return request.headers.get('x-session-id') || request.cookies.get('session_id')?.value || null;
+}
+
+function getUserId(request: NextRequest): string | undefined {
+  return request.headers.get('x-user-id') || undefined;
 }
 
 export async function GET(request: NextRequest) {
   return withErrorHandler(async () => {
-    const sessionId = await getOrCreateSession(request);
-    const cart = await getCart(sessionId);
+    const sessionId = getSessionId(request);
+    if (!sessionId) {
+      throw ApiError.badRequest('Session ID is required');
+    }
+    const userId = getUserId(request);
+    const cart = await getCart(sessionId, userId);
     return successResponse(cart);
   });
 }
 
 export async function POST(request: NextRequest) {
   return withErrorHandler(async () => {
-    const sessionId = await getOrCreateSession(request);
+    const sessionId = getSessionId(request);
+    if (!sessionId) {
+      throw ApiError.badRequest('Session ID is required');
+    }
+    const userId = getUserId(request);
     const body = await parseRequestBody(request, AddToCartSchema);
-    
-    const cart = await addToCart(sessionId, {
-      productId: body.productId,
-      quantity: body.quantity,
-      variantId: body.variantId,
-    });
 
-    if (!cart) {
-      throw ApiError.unprocessable('Failed to add item to cart');
+    const result = await addItemToCart(sessionId, body.productId, body.quantity, userId);
+
+    if (!result.success) {
+      throw ApiError.unprocessable(result.error || 'Failed to add item to cart');
     }
 
-    return successResponse(cart);
+    return successResponse(result.cart);
   });
 }
 
 export async function PUT(request: NextRequest) {
   return withErrorHandler(async () => {
-    const sessionId = await getOrCreateSession(request);
+    const sessionId = getSessionId(request);
+    if (!sessionId) {
+      throw ApiError.badRequest('Session ID is required');
+    }
+    const userId = getUserId(request);
     const body = await parseRequestBody(request, UpdateCartSchema);
-    
-    const cart = await updateCartItem(sessionId, body.itemId, body.quantity);
 
-    if (!cart) {
+    const result = await updateCartItemQuantity(sessionId, body.itemId, body.quantity, userId);
+
+    if (!result.success) {
       throw ApiError.notFound('Cart item');
     }
 
-    return successResponse(cart);
+    return successResponse(result.cart);
   });
 }
 
 export async function DELETE(request: NextRequest) {
   return withErrorHandler(async () => {
-    const sessionId = await getOrCreateSession(request);
+    const sessionId = getSessionId(request);
+    if (!sessionId) {
+      throw ApiError.badRequest('Session ID is required');
+    }
+    const userId = getUserId(request);
     const url = new URL(request.url);
     const itemId = url.searchParams.get('itemId');
     const clearAll = url.searchParams.get('clear') === 'true';
 
     if (clearAll) {
-      const cart = await clearCart(sessionId);
-      return successResponse(cart);
+      const result = await clearCart(sessionId, userId);
+      return successResponse(result.cart);
     }
 
     if (!itemId) {
       throw ApiError.badRequest('Item ID is required');
     }
 
-    const cart = await removeFromCart(sessionId, itemId);
+    const result = await removeItemFromCart(sessionId, itemId, userId);
 
-    if (!cart) {
+    if (!result.success) {
       throw ApiError.notFound('Cart item');
     }
 
-    return successResponse(cart);
+    return successResponse(result.cart);
   });
 }

@@ -10,69 +10,46 @@ import {
   ApiError,
 } from '@/lib/api-utils';
 import {
-  getProducts,
+  listProducts,
   createProduct,
-  countProducts,
-  searchProducts,
 } from '@/lib/products';
-import { CreateProductSchema } from '@/lib/validation';
+import { productCreateSchema } from '@/lib/validation';
+import { ProductFilter } from '@/types/product';
 
 export async function GET(request: NextRequest) {
   return withErrorHandler(async () => {
     const searchParams = parseQueryParams(request);
-    const { page, limit, skip } = getPaginationParams(searchParams);
-    
+    const { page, limit } = getPaginationParams(searchParams);
+
     const search = searchParams.get('search');
     const category = searchParams.get('category');
     const inStock = searchParams.get('inStock');
-    const sortBy = searchParams.get('sortBy') || 'createdAt';
-    const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
 
-    const filters: Record<string, unknown> = {};
-    
+    const filter: ProductFilter = {};
+
     if (category) {
-      filters.category = category;
-    }
-    
-    if (inStock === 'true') {
-      filters.inStock = true;
+      filter.category = category;
     }
 
-    let products;
-    let total;
+    if (inStock === 'true') {
+      filter.inStock = true;
+    }
 
     if (search) {
-      const results = await searchProducts(search, {
-        ...filters,
-        skip,
-        limit,
-        sortBy,
-        sortOrder,
-      });
-      products = results.products;
-      total = results.total;
-    } else {
-      [products, total] = await Promise.all([
-        getProducts({
-          ...filters,
-          skip,
-          limit,
-          sortBy,
-          sortOrder,
-        }),
-        countProducts(filters),
-      ]);
+      filter.search = search;
     }
 
-    return createPaginatedResponse(products, total, page, limit);
+    const result = await listProducts(filter, page, limit);
+
+    return createPaginatedResponse(result.products, result.total, page, limit);
   });
 }
 
 export async function POST(request: NextRequest) {
   return withErrorHandler(async () => {
-    const body = await parseRequestBody(request, CreateProductSchema);
-    
-    const product = await createProduct(body);
+    const body = await parseRequestBody(request, productCreateSchema);
+
+    const product = await createProduct(body as any);
 
     if (!product) {
       throw ApiError.internal('Failed to create product');
