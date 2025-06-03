@@ -4,8 +4,6 @@ node_modules/
 out/
 build/
 
-.env
-.env.local
 .env*.local
 
 *.log
@@ -18,5 +16,5 @@ yarn-debug.log*
 next-env.d.ts
 
 coverage/
-.vscode/
 .idea/
+config.bat
